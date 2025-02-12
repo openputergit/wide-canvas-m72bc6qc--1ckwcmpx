@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D to 3D Animation Studio</title>
+    <script src="https://unpkg.com/@tensorflow/tfjs"></script>
+    <script src="https://unpkg.com/@tensorflow-models/posenet"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Poppins', sans-serif;
+        }
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        #outputCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loading.active {
+            display: flex;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-cyan-700 to-cyan-900 p-4">
+    <div class="loading">
+        <div class="text-white text-2xl">Processing...</div>
+    </div>
+
+    <main class="container mx-auto max-w-4xl">
+        <h1 class="text-4xl font-bold text-white text-center mb-8">2D to 3D Animation Studio</h1>
+        
+        <div class="bg-white rounded-lg p-6 shadow-lg mb-8">
+            <div class="flex flex-col gap-6">
+                <div class="file-upload">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Upload Image</label>
+                    <input type="file" accept="image/*" id="imageInput" class="w-full p-2 border rounded">
+                </div>
+
+                <div class="canvas-container bg-gray-100 rounded-lg overflow-hidden" style="height: 400px;">
+                    <canvas id="skeletonCanvas"></canvas>
+                    <canvas id="outputCanvas"></canvas>
+                </div>
+
+                <div class="controls flex flex-wrap gap-4">
+                    <button onclick="detectPose()" class="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded">
+                        <i class="bi bi-person-lines-fill mr-2"></i>Detect Skeleton
+                    </button>
+                    <button onclick="animate()" class="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded">
+                        <i class="bi bi-play-fill mr-2"></i>Animate
+                    </button>
+                    <button onclick="reset()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+                        <i class="bi bi-arrow-counterclockwise mr-2"></i>Reset
+                    </button>
+                </div>
+
+                <div class="animation-controls">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Animation Type</label>
+                    <select id="animationType" class="w-full p-2 border rounded">
+                        <option value="walk">Walking</option>
+                        <option value="jump">Jumping</option>
+                        <option value="dance">Dancing</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let net;
+        let imageElement;
+        let skeletonPoints = [];
+        const skeletonCanvas = document.getElementById('skeletonCanvas');
+        const outputCanvas = document.getElementById('outputCanvas');
+        const ctx = skeletonCanvas.getContext('2d');
+        const outCtx = outputCanvas.getContext('2d');
+        
+        // Load PoseNet model
+        async function loadModel() {
+            net = await posenet.load({
+                architecture: 'MobileNetV1',
+                outputStride: 16,
+                inputResolution: { width: 800, height: 400 },
+                multiplier: 0.75
+            });
+        }
+        loadModel();
+
+        // Handle image upload
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = function(event) {
+                imageElement = new Image();
+                imageElement.src = event.target.result;
+                
+                imageElement.onload = function() {
+                    skeletonCanvas.width = 800;
+                    skeletonCanvas.height = 400;
+                    outputCanvas.width = 800;
+                    outputCanvas.height = 400;
+                    
+                    // Draw image maintaining aspect ratio
+                    const scale = Math.min(skeletonCanvas.width / imageElement.width, skeletonCanvas.height / imageElement.height);
+                    const x = (skeletonCanvas.width - imageElement.width * scale) / 2;
+                    const y = (skeletonCanvas.height - imageElement.height * scale) / 2;
+                    
+                    ctx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height);
+                    ctx.drawImage(imageElement, x, y, imageElement.width * scale, imageElement.height * scale);
+                }
+            }
+            
+            reader.readAsDataURL(file);
+        });
+
+        // Detect pose points
+        async function detectPose() {
+            if (!imageElement) return;
+            
+            document.querySelector('.loading').classList.add('active');
+            
+            try {
+                const pose = await net.estimateSinglePose(imageElement, {
+                    flipHorizontal: false
+                });
+                
+                skeletonPoints = pose.keypoints;
+                drawSkeleton();
+            } catch (error) {
+                console.error('Error detecting pose:', error);
+            } finally {
+                document.querySelector('.loading').classList.remove('active');
+            }
+        }
+
+        // Draw skeleton on canvas
+        function drawSkeleton() {
+            ctx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height);
+            ctx.drawImage(imageElement, 0, 0, skeletonCanvas.width, skeletonCanvas.height);
+            
+            skeletonPoints.forEach(point => {
+                if (point.score > 0.5) {
+                    ctx.beginPath();
+                    ctx.arc(point.position.x, point.position.y, 5, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#00ff00';
+                    ctx.fill();
+                }
+            });
+        }
+
+        // Animate the skeleton
+        function animate() {
+            if (skeletonPoints.length === 0) return;
+            
+            const animationType = document.getElementById('animationType').value;
+            let frame = 0;
+            
+            function animateFrame() {
+                outCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+                
+                // Apply animation transformations based on type
+                const transformedPoints = skeletonPoints.map(point => {
+                    let x = point.position.x;
+                    let y = point.position.y;
+                    
+                    switch(animationType) {
+                        case 'walk':
+                            x += Math.sin(frame * 0.1) * 10;
+                            break;
+                        case 'jump':
+                            y += Math.sin(frame * 0.1) * 20;
+                            break;
+                        case 'dance':
+                            x += Math.sin(frame * 0.1) * 10;
+                            y += Math.cos(frame * 0.1) * 10;
+                            break;
+                    }
+                    
+                    return { x, y };
+                });
+                
+                // Draw animated skeleton
+                transformedPoints.forEach(point => {
+                    outCtx.beginPath();
+                    outCtx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+                    outCtx.fillStyle = '#ff0000';
+                    outCtx.fill();
+                });
+                
+                frame++;
+                requestAnimationFrame(animateFrame);
+            }
+            
+            animateFrame();
+        }
+
+        // Reset the canvas
+        function reset() {
+            skeletonPoints = [];
+            ctx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height);
+            outCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+            if (imageElement) {
+                ctx.drawImage(imageElement, 0, 0, skeletonCanvas.width, skeletonCanvas.height);
+            }
+        }
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
